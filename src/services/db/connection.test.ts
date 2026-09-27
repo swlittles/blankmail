@@ -5,10 +5,15 @@ const mockExecute = vi.fn();
 const mockSelect = vi.fn();
 const mockDb = { execute: mockExecute, select: mockSelect };
 
-vi.mock("@tauri-apps/plugin-sql", () => ({
-  default: {
-    load: vi.fn(() => Promise.resolve(mockDb)),
-  },
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async (cmd: string, args: { query: string; values: unknown[] }) => {
+    if (cmd === "db_execute") {
+      await mockDb.execute(args.query, args.values);
+      return [0, 0];
+    }
+    if (cmd === "db_select") return mockDb.select(args.query, args.values);
+    throw new Error(`unexpected command ${cmd}`);
+  }),
 }));
 
 // Use dynamic import so mocks are in place
@@ -30,7 +35,7 @@ describe("withTransaction", () => {
       callOrder.push("callback");
     });
 
-    expect(callOrder).toEqual(["BEGIN TRANSACTION", "callback", "COMMIT"]);
+    expect(callOrder).toEqual(["BEGIN IMMEDIATE", "callback", "COMMIT"]);
   });
 
   it("rolls back on callback error", async () => {
@@ -45,7 +50,7 @@ describe("withTransaction", () => {
       }),
     ).rejects.toThrow("callback failed");
 
-    expect(callOrder).toEqual(["BEGIN TRANSACTION", "ROLLBACK"]);
+    expect(callOrder).toEqual(["BEGIN IMMEDIATE", "ROLLBACK"]);
   });
 
   it("handles ROLLBACK failure gracefully (SQLite auto-rollback)", async () => {
@@ -85,9 +90,9 @@ describe("withTransaction", () => {
     await Promise.all([tx1, tx2]);
 
     // tx1 should fully complete (BEGIN, work, done, COMMIT) before tx2 starts
-    const tx1BeginIdx = executionLog.indexOf("BEGIN TRANSACTION");
+    const tx1BeginIdx = executionLog.indexOf("BEGIN IMMEDIATE");
     const tx1CommitIdx = executionLog.indexOf("COMMIT");
-    const tx2BeginIdx = executionLog.lastIndexOf("BEGIN TRANSACTION");
+    const tx2BeginIdx = executionLog.lastIndexOf("BEGIN IMMEDIATE");
 
     expect(tx1BeginIdx).toBeLessThan(tx1CommitIdx);
     expect(tx1CommitIdx).toBeLessThan(tx2BeginIdx);

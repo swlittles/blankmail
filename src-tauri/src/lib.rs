@@ -7,6 +7,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 
 mod commands;
+mod db;
 mod imap;
 mod oauth;
 mod secrets;
@@ -82,7 +83,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -98,6 +98,8 @@ pub fn run() {
             set_tray_tooltip,
             close_splashscreen,
             open_devtools,
+            db::db_execute,
+            db::db_select,
             secrets::encrypt_secret,
             secrets::decrypt_secret,
             commands::imap_test_connection,
@@ -121,6 +123,10 @@ pub fn run() {
             commands::smtp_test_connection,
         ])
         .setup(|app| {
+            // Open the database before the webview can issue queries.
+            let pool = tauri::async_runtime::block_on(db::open(app.handle()))?;
+            app.manage(db::Db(pool));
+
             {
                 let level = if cfg!(debug_assertions) {
                     log::LevelFilter::Debug

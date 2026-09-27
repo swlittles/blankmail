@@ -1,11 +1,34 @@
-import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 
-let db: Database | null = null;
+/**
+ * The app's SQLite database. It lives in the Rust backend (`src-tauri/src/db.rs`)
+ * on a single connection, so statements from one transaction can't end up on
+ * different connections. Same shape as the tauri-plugin-sql `Database` it replaces.
+ */
+export interface QueryResult {
+  rowsAffected: number;
+  lastInsertId?: number;
+}
+
+export interface Database {
+  execute(query: string, bindValues?: unknown[]): Promise<QueryResult>;
+  select<T>(query: string, bindValues?: unknown[]): Promise<T>;
+}
+
+const db: Database = {
+  async execute(query, bindValues = []) {
+    const [rowsAffected, lastInsertId] = await invoke<[number, number]>("db_execute", {
+      query,
+      values: bindValues,
+    });
+    return { rowsAffected, lastInsertId };
+  },
+  select<T>(query: string, bindValues: unknown[] = []) {
+    return invoke<T>("db_select", { query, values: bindValues });
+  },
+};
 
 export async function getDb(): Promise<Database> {
-  if (!db) {
-    db = await Database.load("sqlite:blankmail.db");
-  }
   return db;
 }
 
@@ -39,9 +62,9 @@ export function buildDynamicUpdate(
 
 /**
  * Simple async mutex to prevent concurrent SQLite transactions.
- * SQLite only supports one writer at a time; overlapping BEGIN/COMMIT/ROLLBACK
- * on the same connection causes "cannot start a transaction within a transaction"
- * or "database is locked" errors.
+ * There is one database connection, so overlapping BEGIN/COMMIT/ROLLBACK would
+ * cause "cannot start a transaction within a transaction". Statements issued
+ * outside withTransaction while one is open run inside it.
  */
 let txQueue: Promise<void> = Promise.resolve();
 
@@ -62,7 +85,8 @@ export async function withTransaction(fn: (db: Database) => Promise<void>): Prom
 
   const database = await getDb();
   try {
-    await database.execute("BEGIN TRANSACTION", []);
+    // IMMEDIATE takes the write lock up front instead of upgrading a read lock later.
+    await database.execute("BEGIN IMMEDIATE", []);
     try {
       await fn(database);
       await database.execute("COMMIT", []);
