@@ -149,6 +149,36 @@ fn urlencoding_decode(s: &str) -> String {
     String::from_utf8(result).unwrap_or_else(|_| s.to_string())
 }
 
+/// Refresh tokens and client secrets must only ever be sent to a real
+/// provider token endpoint, even if the webview is compromised and passes
+/// an attacker-controlled URL.
+fn validate_token_url(token_url: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(token_url).map_err(|_| "Invalid OAuth token URL".to_string())?;
+    let host = url.host_str().unwrap_or_default();
+    let path = url.path();
+    let allowed = url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && match host {
+            "oauth2.googleapis.com" => path == "/token",
+            "api.login.yahoo.com" => path == "/oauth2/get_token",
+            "login.microsoftonline.com" => {
+                let mut segments = path.trim_start_matches('/').split('/');
+                let tenant = segments.next().unwrap_or_default();
+                !tenant.is_empty()
+                    && tenant.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+                    && segments.collect::<Vec<_>>() == ["oauth2", "v2.0", "token"]
+            }
+            _ => false,
+        };
+    if allowed {
+        Ok(url)
+    } else {
+        Err(format!("OAuth token URL is not an allowed provider endpoint: {token_url}"))
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct TokenExchangeResult {
     pub access_token: String,
@@ -170,6 +200,7 @@ pub async fn oauth_exchange_token(
     client_secret: Option<String>,
     scope: Option<String>,
 ) -> Result<TokenExchangeResult, String> {
+    let token_url = validate_token_url(&token_url)?;
     let mut params = vec![
         ("code", code),
         ("client_id", client_id),
@@ -190,7 +221,7 @@ pub async fn oauth_exchange_token(
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&token_url)
+        .post(token_url.clone())
         .form(&params)
         .send()
         .await
@@ -219,6 +250,7 @@ pub async fn oauth_refresh_token(
     client_secret: Option<String>,
     scope: Option<String>,
 ) -> Result<TokenExchangeResult, String> {
+    let token_url = validate_token_url(&token_url)?;
     let mut params = vec![
         ("refresh_token", refresh_token),
         ("client_id", client_id),
@@ -235,7 +267,7 @@ pub async fn oauth_refresh_token(
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&token_url)
+        .post(token_url.clone())
         .form(&params)
         .send()
         .await
@@ -253,4 +285,39 @@ pub async fn oauth_refresh_token(
         .json::<TokenExchangeResult>()
         .await
         .map_err(|e| format!("Failed to parse token response: {}", e))
+}
+
+#[cfg(test)]
+mod token_url_tests {
+    use super::validate_token_url;
+
+    #[test]
+    fn allows_known_provider_endpoints() {
+        for url in [
+            "https://oauth2.googleapis.com/token",
+            "https://api.login.yahoo.com/oauth2/get_token",
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            "https://login.microsoftonline.com/0b1c2d3e-aaaa-bbbb-cccc-123456789abc/oauth2/v2.0/token",
+        ] {
+            assert!(validate_token_url(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn rejects_everything_else() {
+        for url in [
+            "http://oauth2.googleapis.com/token",
+            "https://evil.example/token",
+            "https://oauth2.googleapis.com.evil.example/token",
+            "https://oauth2.googleapis.com/other",
+            "https://oauth2.googleapis.com:8443/token",
+            "https://user@oauth2.googleapis.com/token",
+            "https://login.microsoftonline.com/oauth2/v2.0/token",
+            "https://login.microsoftonline.com/a/b/oauth2/v2.0/token",
+            "not a url",
+        ] {
+            assert!(validate_token_url(url).is_err(), "{url}");
+        }
+    }
 }

@@ -191,6 +191,9 @@ Key tables (37 total): `accounts` (with `provider` "gmail_api"|"imap", IMAP/SMTP
 - **IMAP UIDVALIDITY**: If UIDVALIDITY changes on a folder, all cached UIDs are invalid — triggers full resync of that folder
 - **IMAP folders vs labels**: IMAP has no native labels; folders are mapped to Gmail-style labels via `folderMapper.ts` using special-use flags and well-known name matching
 - **IMAP passwords**: Encrypted with AES-256-GCM in SQLite (same crypto as OAuth tokens)
+- **Credential encryption**: `utils/crypto.ts` calls the Rust `encrypt_secret`/`decrypt_secret` commands (`src-tauri/src/secrets.rs`). The AES key lives in the OS keychain (service `com.swlittles.blankmail`) and never reaches the webview or disk. `cargo test -- --ignored` runs the real-keychain test
+- **OAuth token URLs**: `oauth.rs` only sends tokens to allowlisted Google/Microsoft/Yahoo token endpoints — add new providers to `validate_token_url`
+- **Webview capabilities**: fs is scoped to `$APPDATA/attachment_cache`; the http plugin allows public `https://` only (one-click unsubscribe, also checked by `utils/urlSafety.ts`). Devtools exist only in debug builds
 - **IMAP username**: Optional `imap_username` column on accounts — when set, used as login username for IMAP/SMTP instead of email. Falls back to email when null
 - **IMAP auto-discovery**: Pre-configured for Outlook/Hotmail, Yahoo, iCloud, AOL, Zoho, FastMail, GMX; other providers require manual server entry
 - **Provider abstraction**: All sync/send operations go through `EmailProvider` interface — use `getEmailProvider(account)` from `providerFactory.ts`, never call Gmail or IMAP APIs directly from components

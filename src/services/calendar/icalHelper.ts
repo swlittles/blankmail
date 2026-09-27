@@ -22,8 +22,8 @@ export function generateVEvent(event: CreateEventInput | UpdateEventInput, uid?:
 
   if (event.startTime && event.endTime) {
     if (event.isAllDay) {
-      lines.push(`DTSTART;VALUE=DATE:${formatDateOnly(new Date(event.startTime))}`);
-      lines.push(`DTEND;VALUE=DATE:${formatDateOnly(new Date(event.endTime))}`);
+      lines.push(`DTSTART;VALUE=DATE:${formatDateOnly(event.startTime)}`);
+      lines.push(`DTEND;VALUE=DATE:${formatDateOnly(event.endTime)}`);
     } else {
       lines.push(`DTSTART:${formatDateTimeUTC(new Date(event.startTime))}`);
       lines.push(`DTEND:${formatDateTimeUTC(new Date(event.endTime))}`);
@@ -152,7 +152,15 @@ function formatDateTimeUTC(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 }
 
-function formatDateOnly(date: Date): string {
+/**
+ * All-day events are calendar dates, not instants. Take the date as written in
+ * the ISO string (like the Google provider does) instead of converting to local
+ * time, which would shift it by a day for anyone west of UTC.
+ */
+function formatDateOnly(isoDate: string): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[1]}${match[2]}${match[3]}`;
+  const date = new Date(isoDate);
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");

@@ -16,17 +16,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
       - run: npm ci
       - run: npm run test
-        env:
-          TZ: UTC
 
   build:
     needs: test
@@ -41,16 +39,18 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
 
@@ -64,13 +64,13 @@ jobs:
             patchelf \
             libssl-dev \
             libgtk-3-dev \
-            libayatana-appindicator3-dev
+            libayatana-appindicator3-dev libdbus-1-dev pkg-config
 
       - run: npm ci
 
       - name: Build and upload to existing release
         if: inputs.release_id
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -82,7 +82,7 @@ jobs:
 
       - name: Build and create release
         if: ${{ !inputs.release_id }}
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -91,7 +91,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: "BlankMail v__VERSION__"
           releaseBody: "See the assets below to download for your platform."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: ${{ matrix.args }}
@@ -100,18 +100,19 @@ jobs:
     needs: test
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
 
@@ -150,7 +151,7 @@ jobs:
 
       - name: Build and upload (signed + notarized)
         if: steps.signing-check.outputs.has_signing == 'true' && inputs.release_id
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -166,7 +167,7 @@ jobs:
 
       - name: Build and release (signed + notarized)
         if: steps.signing-check.outputs.has_signing == 'true' && !inputs.release_id
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -179,14 +180,14 @@ jobs:
           tagName: v__VERSION__
           releaseName: "BlankMail v__VERSION__"
           releaseBody: "See the assets below to download for your platform."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin
 
       - name: Build and upload (unsigned)
         if: steps.signing-check.outputs.has_signing != 'true' && inputs.release_id
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -198,7 +199,7 @@ jobs:
 
       - name: Build and release (unsigned)
         if: steps.signing-check.outputs.has_signing != 'true' && !inputs.release_id
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -214,10 +215,19 @@ jobs:
             > xattr -cr /Applications/BlankMail.app
             > ```
             > Or right-click the app and select "Open" on first launch.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin
+
+      - name: Verify signature, notarization and Gatekeeper
+        if: steps.signing-check.outputs.has_signing == 'true'
+        run: |
+          APP=src-tauri/target/universal-apple-darwin/release/bundle/macos/BlankMail.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier|flags="
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
 
       - name: Clean up keychain
         if: always() && steps.signing-check.outputs.has_signing == 'true'

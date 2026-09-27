@@ -1,4 +1,5 @@
 import { getActiveProvider } from "./providerManager";
+import { neutralizeEmailTags } from "./promptSafety";
 import { AiError } from "./errors";
 import { getAiCache, setAiCache, deleteAiCache } from "@/services/db/aiCache";
 import {
@@ -87,7 +88,7 @@ function formatThreadForDraft(messages: DbMessage[]): string {
         year: "numeric",
       });
       const body = (msg.body_text ?? msg.snippet ?? "").trim();
-      return `From: ${from}\nDate: ${date}\n\n${body}`;
+      return `From: ${neutralizeEmailTags(from)}\nDate: ${date}\n\n${neutralizeEmailTags(body)}`;
     })
     .join("\n---\n");
 }
@@ -120,7 +121,7 @@ export async function generateAutoDraft(
     ? `\n\nUser's writing style:\n${styleProfile}`
     : "";
 
-  const userContent = `<email_content>Subject: ${subject}\n\n${threadContent}</email_content>${styleSection}`.slice(
+  const userContent = `<email_content>Subject: ${neutralizeEmailTags(subject)}\n\n${threadContent}</email_content>${styleSection}`.slice(
     0,
     6000,
   );

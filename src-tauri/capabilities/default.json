@@ -29,19 +29,22 @@
     "opener:allow-open-url",
     "dialog:default",
     "dialog:allow-save",
-    "fs:default",
-    "fs:allow-appdata-read-recursive",
-    "fs:allow-appdata-write-recursive",
+    "fs:deny-default",
     "fs:allow-read-file",
     "fs:allow-write-file",
+    "fs:allow-write-text-file",
     "fs:allow-exists",
     "fs:allow-mkdir",
     "fs:allow-remove",
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$APPDATA" },
-        { "path": "$APPDATA/**" }
+        {
+          "path": "$APPDATA/attachment_cache"
+        },
+        {
+          "path": "$APPDATA/attachment_cache/**"
+        }
       ]
     },
     "core:window:allow-minimize",
@@ -65,10 +68,86 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "http://*" },
-        { "url": "http://*/*" },
-        { "url": "https://*" },
-        { "url": "https://*/*" }
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "https://*/*"
+        }
+      ],
+      "deny": [
+        {
+          "url": "https://localhost"
+        },
+        {
+          "url": "https://localhost/*"
+        },
+        {
+          "url": "https://localhost:*"
+        },
+        {
+          "url": "https://localhost:*/*"
+        },
+        {
+          "url": "https://127.*"
+        },
+        {
+          "url": "https://127.*/*"
+        },
+        {
+          "url": "https://127.*:*"
+        },
+        {
+          "url": "https://127.*:*/*"
+        },
+        {
+          "url": "https://10.*"
+        },
+        {
+          "url": "https://10.*/*"
+        },
+        {
+          "url": "https://10.*:*"
+        },
+        {
+          "url": "https://10.*:*/*"
+        },
+        {
+          "url": "https://192.168.*"
+        },
+        {
+          "url": "https://192.168.*/*"
+        },
+        {
+          "url": "https://192.168.*:*"
+        },
+        {
+          "url": "https://192.168.*:*/*"
+        },
+        {
+          "url": "https://169.254.*"
+        },
+        {
+          "url": "https://169.254.*/*"
+        },
+        {
+          "url": "https://169.254.*:*"
+        },
+        {
+          "url": "https://169.254.*:*/*"
+        },
+        {
+          "url": "https://0.0.0.0"
+        },
+        {
+          "url": "https://0.0.0.0/*"
+        },
+        {
+          "url": "https://0.0.0.0:*"
+        },
+        {
+          "url": "https://0.0.0.0:*/*"
+        }
       ]
     },
     "updater:default",

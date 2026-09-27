@@ -106,3 +106,16 @@ describe("sanitizeHtml", () => {
     expect(sanitizeHtml("")).toBe("");
   });
 });
+
+describe("sanitizeHtml remote-loading tags", () => {
+  it("removes tags that could load remote resources past the image blocker", () => {
+    const html =
+      '<input type="image" src="https://t.example.com/a.gif">' +
+      '<video poster="https://t.example.com/b.gif"><source src="https://t.example.com/c.mp4"></video>' +
+      '<svg><image href="https://t.example.com/d.gif"></image></svg>' +
+      '<p>kept</p>';
+    const out = sanitizeHtml(html);
+    expect(out).not.toContain("t.example.com");
+    expect(out).toContain("<p>kept</p>");
+  });
+});
