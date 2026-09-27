@@ -163,3 +163,11 @@ describe("accept_invalid_certs", () => {
     expect(smtpConfig.accept_invalid_certs).toBe(true);
   });
 });
+
+describe("buildSmtpConfig separate SMTP password", () => {
+  it("uses smtp_password when set and falls back to imap_password", () => {
+    const base = createMockDbAccount({ imap_password: "imap-pw" });
+    expect(buildSmtpConfig({ ...base, smtp_password: "smtp-pw" }).password).toBe("smtp-pw");
+    expect(buildSmtpConfig({ ...base, smtp_password: null }).password).toBe("imap-pw");
+  });
+});

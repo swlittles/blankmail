@@ -81,6 +81,8 @@ function getCachedReverseMap(keyMap: Record<string, string>): ReturnType<typeof 
  * Global keyboard shortcuts handler (Superhuman-inspired).
  * Uses customizable key bindings from the shortcut store.
  */
+const NATIVE_TEXT_EDIT_KEYS = new Set(["a", "c", "v", "x", "z", "y"]);
+
 export function useKeyboardShortcuts() {
   const pendingKeyRef = useRef<string | null>(null);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,8 +105,10 @@ export function useKeyboardShortcuts() {
       const keyMap = useShortcutStore.getState().keyMap;
       const { singleKey, twoKeySequences, ctrlCombos } = getCachedReverseMap(keyMap);
 
-      // Ctrl/Cmd shortcuts work everywhere
+      // Ctrl/Cmd shortcuts work everywhere, except that text fields keep their
+      // native editing shortcuts (select all, copy, paste, cut, undo, redo).
       if (e.ctrlKey || e.metaKey) {
+        if (isInputFocused && NATIVE_TEXT_EDIT_KEYS.has(e.key.toLowerCase())) return;
         for (const [actionId, binding] of ctrlCombos) {
           if (matchesKey(binding, e)) {
             e.preventDefault();

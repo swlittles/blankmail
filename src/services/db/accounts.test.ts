@@ -172,7 +172,30 @@ describe("accounts", () => {
         "enc:my-app-password", // encrypted
         null, // imap_username
         0, // accept_invalid_certs
+        null, // smtp_password (same as IMAP)
       ]);
+    });
+
+    it("encrypts a separate SMTP password", async () => {
+      mockExecute.mockResolvedValue(undefined);
+      await insertImapAccount({
+        id: "new-imap",
+        email: "user@fastmail.com",
+        displayName: null,
+        avatarUrl: null,
+        imapHost: "imap.fastmail.com",
+        imapPort: 993,
+        imapSecurity: "ssl",
+        smtpHost: "smtp.fastmail.com",
+        smtpPort: 465,
+        smtpSecurity: "ssl",
+        authMethod: "password",
+        password: "imap-pw",
+        smtpPassword: "smtp-pw",
+      });
+      const [, params] = mockExecute.mock.calls[0] as [string, unknown[]];
+      expect(params[11]).toBe("enc:imap-pw");
+      expect(params[14]).toBe("enc:smtp-pw");
     });
 
     it("inserts IMAP account with custom username", async () => {
