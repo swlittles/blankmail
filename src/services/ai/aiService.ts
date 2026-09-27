@@ -1,6 +1,7 @@
 import { getActiveProvider } from "./providerManager";
 import { getAiCache, setAiCache } from "@/services/db/aiCache";
 import { AiError } from "./errors";
+import { neutralizeEmailTags } from "./promptSafety";
 import type { DbMessage } from "@/services/db/messages";
 import {
   SUMMARIZE_PROMPT,
@@ -43,7 +44,7 @@ function formatMessageForSummary(msg: DbMessage): string {
     year: "numeric",
   });
   const body = (msg.body_text ?? msg.snippet ?? "").trim();
-  return `<email_content>From: ${from}\nDate: ${date}\n\n${body}</email_content>`;
+  return `<email_content>From: ${neutralizeEmailTags(from)}\nDate: ${date}\n\n${neutralizeEmailTags(body)}</email_content>`;
 }
 
 export async function summarizeThread(
@@ -73,7 +74,7 @@ export async function generateReply(
   messagesText: string[],
   instructions?: string,
 ): Promise<string> {
-  const combined = messagesText.join("\n---\n").slice(0, 4000);
+  const combined = neutralizeEmailTags(messagesText.join("\n---\n")).slice(0, 4000);
   const userContent = instructions
     ? `<email_content>${combined}</email_content>\n\nInstructions: ${instructions}`
     : `<email_content>${combined}</email_content>`;
@@ -148,7 +149,7 @@ export async function askInbox(
   _accountId: string,
   context: string,
 ): Promise<string> {
-  const userContent = `<email_content>${context}</email_content>\n\nQuestion: ${question}`;
+  const userContent = `<email_content>${neutralizeEmailTags(context)}</email_content>\n\nQuestion: ${question}`;
   return callAi(ASK_INBOX_PROMPT, userContent);
 }
 
@@ -158,7 +159,7 @@ export async function categorizeThreads(
   threads: { id: string; subject: string; snippet: string; fromAddress: string }[],
 ): Promise<Map<string, string>> {
   const input = threads
-    .map((t) => `<email_content>ID:${t.id} | From:${t.fromAddress} | Subject:${t.subject} | ${t.snippet}</email_content>`)
+    .map((t) => `<email_content>ID:${t.id} | From:${neutralizeEmailTags(t.fromAddress)} | Subject:${neutralizeEmailTags(t.subject)} | ${neutralizeEmailTags(t.snippet)}</email_content>`)
     .join("\n");
 
   const validThreadIds = new Set(threads.map((t) => t.id));
@@ -191,7 +192,7 @@ export async function classifyThreadsBySmartLabels(
     .join("\n");
 
   const threadData = threads
-    .map((t) => `<email_content>ID:${t.id} | From:${t.fromAddress} | Subject:${t.subject} | ${t.snippet}</email_content>`)
+    .map((t) => `<email_content>ID:${t.id} | From:${neutralizeEmailTags(t.fromAddress)} | Subject:${neutralizeEmailTags(t.subject)} | ${neutralizeEmailTags(t.snippet)}</email_content>`)
     .join("\n");
 
   const userContent = `Label definitions:\n${labelDefs}\n\nThreads:\n${threadData}`;
@@ -231,7 +232,7 @@ export async function extractTaskFromThread(
 ): Promise<string> {
   const subject = messages[0]?.subject ?? "No subject";
   const formatted = messages.map(formatMessageForSummary).join("\n---\n");
-  const combined = `<email_content>Subject: ${subject}\n\n${formatted}</email_content>`.slice(0, 6000);
+  const combined = `<email_content>Subject: ${neutralizeEmailTags(subject)}\n\n${formatted}</email_content>`.slice(0, 6000);
   return callAi(EXTRACT_TASK_PROMPT, combined);
 }
 

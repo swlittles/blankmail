@@ -9,6 +9,7 @@ use tauri_plugin_autostart::MacosLauncher;
 mod commands;
 mod imap;
 mod oauth;
+mod secrets;
 mod smtp;
 
 #[tauri::command]
@@ -40,11 +41,15 @@ fn set_tray_tooltip(app: tauri::AppHandle, tooltip: String) -> Result<(), String
     }
 }
 
+/// Devtools are only compiled into debug builds; in release this is a no-op.
 #[tauri::command]
 fn open_devtools(app: tauri::AppHandle) {
+    #[cfg(debug_assertions)]
     if let Some(w) = app.get_webview_window("main") {
         w.open_devtools();
     }
+    #[cfg(not(debug_assertions))]
+    let _ = app;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +98,8 @@ pub fn run() {
             set_tray_tooltip,
             close_splashscreen,
             open_devtools,
+            secrets::encrypt_secret,
+            secrets::decrypt_secret,
             commands::imap_test_connection,
             commands::imap_list_folders,
             commands::imap_fetch_messages,

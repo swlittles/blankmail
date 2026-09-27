@@ -34,6 +34,7 @@ BlankMail is a desktop application. Your emails, tokens, and settings are stored
 
 - **Gmail**: OAuth 2.0 with PKCE -- no client secret stored. Tokens are encrypted with AES-256-GCM before being saved to the local database.
 - **IMAP/SMTP**: Passwords and app passwords are encrypted with AES-256-GCM in the local SQLite database.
+- **Encryption key**: The AES-256-GCM key is stored in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service), not on disk. Encryption and decryption happen in the Rust backend, so the key never reaches the webview.
 - **AI API key**: The OpenRouter API key is encrypted with AES-256-GCM in the local settings table. It is sent only to OpenRouter over HTTPS -- never to any BlankMail server.
 
 ### Email Rendering

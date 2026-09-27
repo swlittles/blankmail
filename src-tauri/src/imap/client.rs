@@ -965,12 +965,16 @@ pub async fn raw_fetch_messages(
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, xoauth2.as_bytes());
         format!("a1 AUTHENTICATE XOAUTH2 {b64}\r\n")
     } else {
-        format!("a1 LOGIN \"{}\" \"{}\"\r\n", config.username, config.password)
+        format!(
+            "a1 LOGIN {} {}\r\n",
+            imap_quote(&config.username)?,
+            imap_quote(&config.password)?
+        )
     };
     raw_send_and_wait(&mut reader, login_cmd.as_bytes(), "a1").await?;
 
     // SELECT
-    let select_cmd = format!("a2 SELECT \"{folder}\"\r\n");
+    let select_cmd = format!("a2 SELECT {}\r\n", imap_quote(folder)?);
     let select_response = raw_send_and_wait(&mut reader, select_cmd.as_bytes(), "a2").await?;
 
     // Parse SELECT response for UIDVALIDITY, EXISTS, UNSEEN
@@ -1002,6 +1006,7 @@ pub async fn raw_fetch_messages(
     };
 
     // UID FETCH with full body
+    let uid_range = validate_uid_set(uid_range)?;
     let fetch_cmd = format!("a3 UID FETCH {uid_range} (UID FLAGS INTERNALDATE BODY.PEEK[])\r\n");
     reader.get_mut().write_all(fetch_cmd.as_bytes()).await
         .map_err(|e| format!("FETCH write: {e}"))?;
@@ -1063,19 +1068,24 @@ pub async fn raw_fetch_diagnostic(
     }
 
     // LOGIN
-    let login_cmd = format!("a1 LOGIN \"{}\" \"{}\"\r\n", config.username, config.password);
+    let login_cmd = format!(
+        "a1 LOGIN {} {}\r\n",
+        imap_quote(&config.username)?,
+        imap_quote(&config.password)?
+    );
     stream.write_all(login_cmd.as_bytes()).await.map_err(|e| format!("LOGIN: {e}"))?;
     let n = stream.read(&mut buf).await.map_err(|e| format!("LOGIN read: {e}"))?;
     output.push_str(&format!("S: {}", String::from_utf8_lossy(&buf[..n])));
 
     // SELECT
-    let select_cmd = format!("a2 SELECT \"{folder}\"\r\n");
+    let select_cmd = format!("a2 SELECT {}\r\n", imap_quote(folder)?);
     stream.write_all(select_cmd.as_bytes()).await.map_err(|e| format!("SELECT: {e}"))?;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let n = stream.read(&mut buf).await.map_err(|e| format!("SELECT read: {e}"))?;
     output.push_str(&format!("S: {}", String::from_utf8_lossy(&buf[..n])));
 
     // UID FETCH — just get UID and FLAGS first (small response)
+    let uid_range = validate_uid_set(uid_range)?;
     let fetch_cmd = format!("a3 UID FETCH {uid_range} (UID FLAGS)\r\n");
     stream.write_all(fetch_cmd.as_bytes()).await.map_err(|e| format!("FETCH: {e}"))?;
 
@@ -1256,9 +1266,15 @@ async fn raw_parse_fetch_responses(
                     log::warn!("RAW FETCH: could not parse UID from: {}", line.trim());
                     // Still need to consume any literal
                     if let Some(literal_size) = extract_literal_size(&line) {
-                        let mut discard = vec![0u8; literal_size];
-                        reader.read_exact(&mut discard).await
-                            .map_err(|e| format!("discard literal: {e}"))?;
+                        let skipped = tokio::io::copy(
+                            &mut (&mut *reader).take(literal_size as u64),
+                            &mut tokio::io::sink(),
+                        )
+                        .await
+                        .map_err(|e| format!("discard literal: {e}"))?;
+                        if skipped != literal_size as u64 {
+                            return Err("discard literal: connection closed early".to_string());
+                        }
                     }
                     continue;
                 }
@@ -1274,6 +1290,12 @@ async fn raw_parse_fetch_responses(
 
                 // Check for literal: {size}
                 if let Some(literal_size) = extract_literal_size(&line) {
+                    // The size comes from the server; don't let it make us allocate unbounded memory.
+                    if literal_size > MAX_LITERAL_SIZE {
+                        return Err(format!(
+                            "Message UID {uid} is {literal_size} bytes, over the {MAX_LITERAL_SIZE}-byte limit"
+                        ));
+                    }
                     // Read exactly `literal_size` bytes
                     let mut body = vec![0u8; literal_size];
                     reader.read_exact(&mut body).await
@@ -1390,6 +1412,28 @@ fn is_leap_year(y: i64) -> bool {
 }
 
 /// Extract literal size from a line ending with {1234}\r\n
+/// Largest message body we'll buffer from a raw FETCH response.
+const MAX_LITERAL_SIZE: usize = 100 * 1024 * 1024;
+
+/// Quote a value as an IMAP quoted string (RFC 3501), escaping `\` and `"`.
+/// CR, LF and NUL can't appear in a quoted string, and letting them through
+/// would allow injecting extra IMAP commands.
+fn imap_quote(value: &str) -> Result<String, String> {
+    if value.contains(['\r', '\n', '\0']) {
+        return Err("Value contains a line break or NUL and can't be sent to the IMAP server".to_string());
+    }
+    Ok(format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+}
+
+/// Accept only IMAP UID sets like `1:*`, `5`, `1,4,7:9`.
+fn validate_uid_set(uid_set: &str) -> Result<&str, String> {
+    if !uid_set.is_empty() && uid_set.chars().all(|c| c.is_ascii_digit() || matches!(c, ':' | ',' | '*')) {
+        Ok(uid_set)
+    } else {
+        Err(format!("Invalid IMAP UID set: {uid_set:?}"))
+    }
+}
+
 fn extract_literal_size(line: &str) -> Option<usize> {
     let trimmed = line.trim_end();
     if !trimmed.ends_with('}') {
@@ -1832,5 +1876,33 @@ fn format_address_list(addr: Option<&mail_parser::Address>) -> Option<String> {
         None
     } else {
         Some(parts.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod raw_command_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_and_escapes() {
+        assert_eq!(imap_quote("INBOX").unwrap(), "\"INBOX\"");
+        assert_eq!(imap_quote(r#"pa"ss\word"#).unwrap(), r#""pa\"ss\\word""#);
+    }
+
+    #[test]
+    fn rejects_command_injection() {
+        assert!(imap_quote("x\r\na9 DELETE INBOX").is_err());
+        assert!(imap_quote("x\n").is_err());
+        assert!(imap_quote("x\0").is_err());
+    }
+
+    #[test]
+    fn validates_uid_sets() {
+        for ok in ["1", "1:*", "1,4,7:9", "*"] {
+            assert!(validate_uid_set(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "1 FLAGS", "1\r\na9 LOGOUT", "abc"] {
+            assert!(validate_uid_set(bad).is_err(), "{bad}");
+        }
     }
 }

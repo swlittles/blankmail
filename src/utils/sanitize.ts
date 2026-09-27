@@ -11,7 +11,12 @@ export function escapeHtml(str: string): string {
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
     ALLOW_UNKNOWN_PROTOCOLS: false,
-    FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form"],
+    // Media/input/SVG-image tags can load remote resources the image blocker doesn't handle.
+    FORBID_TAGS: [
+      "script", "style", "iframe", "object", "embed", "form",
+      "input", "button", "textarea", "select",
+      "video", "audio", "source", "track", "image",
+    ],
     ALLOWED_ATTR: [
       "href", "src", "alt", "title", "width", "height", "class", "style",
       "target", "rel", "colspan", "rowspan", "cellpadding", "cellspacing",

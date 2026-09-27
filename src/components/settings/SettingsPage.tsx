@@ -1536,27 +1536,30 @@ function DeveloperTab() {
         </div>
       </Section>
 
-      <Section title="Developer Tools">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-sm text-text-secondary">Open DevTools</span>
-            <p className="text-xs text-text-tertiary mt-0.5">
-              Open the WebView developer tools inspector
-            </p>
+      {/* Devtools only exist in debug builds (see open_devtools in lib.rs). */}
+      {import.meta.env.DEV && (
+        <Section title="Developer Tools">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm text-text-secondary">Open DevTools</span>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                Open the WebView developer tools inspector
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={async () => {
+                const { invoke } = await import("@tauri-apps/api/core");
+                await invoke("open_devtools");
+              }}
+              className="bg-bg-tertiary text-text-primary border border-border-primary"
+            >
+              Open DevTools
+            </Button>
           </div>
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={async () => {
-              const { invoke } = await import("@tauri-apps/api/core");
-              await invoke("open_devtools");
-            }}
-            className="bg-bg-tertiary text-text-primary border border-border-primary"
-          >
-            Open DevTools
-          </Button>
-        </div>
-      </Section>
+        </Section>
+      )}
     </>
   );
 }

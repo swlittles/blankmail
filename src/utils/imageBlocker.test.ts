@@ -92,3 +92,14 @@ describe("hasBlockedImages", () => {
     expect(hasBlockedImages(html)).toBe(false);
   });
 });
+
+describe("stripRemoteImages protocol-relative URLs", () => {
+  it("blocks //host images and url(//host) backgrounds", () => {
+    const html = '<img src="//tracker.example.com/p.gif"><div style="background:url(//t.example.com/bg.png)"></div>';
+    const result = stripRemoteImages(html);
+    expect(result).toContain('data-blocked-src="//tracker.example.com/p.gif"');
+    expect(result).not.toContain("t.example.com/bg.png");
+    expect(hasBlockedImages(result)).toBe(true);
+    expect(restoreRemoteImages(result)).toContain('src="//tracker.example.com/p.gif"');
+  });
+});

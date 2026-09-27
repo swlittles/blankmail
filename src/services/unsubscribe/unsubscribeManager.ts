@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { fetch } from "@tauri-apps/plugin-http";
 import { getCurrentUnixTimestamp } from "@/utils/timestamp";
 import { normalizeEmail } from "@/utils/emailUtils";
+import { isPublicHttpsUrl } from "@/utils/urlSafety";
 
 export interface ParsedUnsubscribe {
   httpUrl: string | null;
@@ -57,8 +58,8 @@ export async function executeUnsubscribe(
   let method = "browser";
   let success = false;
 
-  // Method 1: RFC 8058 one-click HTTP POST
-  if (parsed.hasOneClick && parsed.httpUrl) {
+  // Method 1: RFC 8058 one-click HTTP POST (public HTTPS endpoints only)
+  if (parsed.hasOneClick && parsed.httpUrl && isPublicHttpsUrl(parsed.httpUrl)) {
     try {
       const response = await fetch(parsed.httpUrl, {
         method: "POST",
