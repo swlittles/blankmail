@@ -34,6 +34,7 @@ vi.mock("@/stores/shortcutStore", () => ({
         "app.commandPalette": "/",
         "app.toggleSidebar": "Ctrl+Shift+E",
         "app.help": "?",
+        "action.selectAll": "Ctrl+A",
       },
     }),
   },
@@ -120,5 +121,22 @@ describe("useKeyboardShortcuts", () => {
     expect(listener).toHaveBeenCalledTimes(1);
 
     window.removeEventListener("blankmail-toggle-shortcuts-help", listener);
+  });
+
+  it("leaves Cmd+A to a focused text field instead of selecting all threads", () => {
+    renderHook(() => useKeyboardShortcuts());
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    const inField = new KeyboardEvent("keydown", { key: "a", metaKey: true, bubbles: true, cancelable: true });
+    input.dispatchEvent(inField);
+    expect(inField.defaultPrevented).toBe(false);
+
+    const outside = new KeyboardEvent("keydown", { key: "a", metaKey: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(outside);
+    expect(outside.defaultPrevented).toBe(true);
+
+    input.remove();
   });
 });

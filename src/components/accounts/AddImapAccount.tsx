@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -16,11 +16,16 @@ import { Modal } from "@/components/ui/Modal";
 import { insertImapAccount, insertOAuthImapAccount } from "@/services/db/accounts";
 import { useAccountStore } from "@/stores/accountStore";
 import {
-  discoverSettings,
+  extractDomain,
+  findWellKnownProvider,
+  guessServerSettings,
   getDefaultImapPort,
   getDefaultSmtpPort,
   type SecurityType,
+  type ServerSettings,
 } from "@/services/imap/autoDiscovery";
+import { lookupAutoconfig } from "@/services/imap/autoconfig";
+import { clearAccountDraft, loadAccountDraft, saveAccountDraft } from "@/services/imap/accountDraft";
 import { getOAuthProvider } from "@/services/oauth/providers";
 import { startProviderOAuthFlow } from "@/services/oauth/oauthFlow";
 
@@ -103,6 +108,30 @@ interface TestStatus {
   message?: string;
 }
 
+/** Where the server settings came from, shown under the email field. */
+interface DiscoveryState {
+  status: "idle" | "looking" | "done";
+  domain?: string;
+  source?: "known" | "autoconfig" | "guess";
+  /** Host the autoconfig document came from. */
+  detail?: string;
+}
+
+/** Server fields last filled in automatically, so we only overwrite them if the user hasn't edited them. */
+type AutoFilled = Pick<FormState, "imapHost" | "smtpHost">;
+
+/** Everything needed to resume the wizard; saved encrypted until the account is added. */
+interface WizardDraft {
+  form: FormState;
+  step: Step;
+  discovery: DiscoveryState;
+  autoFilled: AutoFilled | null;
+  detectedAuthMethods: AuthMode[];
+  detectedOAuthProviderId: string | null;
+}
+
+const DRAFT_SAVE_DELAY_MS = 400;
+
 const inputClass =
   "w-full px-3 py-2 bg-bg-secondary border border-border-primary rounded-lg text-sm text-text-primary outline-none focus:border-accent transition-colors";
 const labelClass = "block text-xs font-medium text-text-secondary mb-1";
@@ -126,13 +155,82 @@ export function AddImapAccount({
   const [smtpTest, setSmtpTest] = useState<TestStatus>({ state: "idle" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [discoveryApplied, setDiscoveryApplied] = useState(false);
+  const [discovery, setDiscovery] = useState<DiscoveryState>({ status: "idle" });
   const [oauthConnecting, setOauthConnecting] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [detectedAuthMethods, setDetectedAuthMethods] = useState<AuthMode[]>(["password"]);
   const [detectedOAuthProviderId, setDetectedOAuthProviderId] = useState<string | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const autoFilledRef = useRef<AutoFilled | null>(null);
+  // Set once the account is saved so a pending debounced save can't recreate the draft.
+  const finishedRef = useRef(false);
 
   const addAccount = useAccountStore((s) => s.addAccount);
+
+  // Restore a previous, unfinished attempt.
+  useEffect(() => {
+    let cancelled = false;
+    void loadAccountDraft<WizardDraft>().then((draft) => {
+      if (cancelled) return;
+      if (draft?.form) {
+        setForm({ ...initialFormState, ...draft.form });
+        setCurrentStep(steps.includes(draft.step) ? draft.step : "basic");
+        setDiscovery(draft.discovery?.status === "looking" ? { status: "idle" } : (draft.discovery ?? { status: "idle" }));
+        autoFilledRef.current = draft.autoFilled ?? null;
+        setDetectedAuthMethods(draft.detectedAuthMethods?.length ? draft.detectedAuthMethods : ["password"]);
+        setDetectedOAuthProviderId(draft.detectedOAuthProviderId ?? null);
+        setRestoredDraft(true);
+      }
+      setDraftLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Save progress as the user types.
+  useEffect(() => {
+    if (!draftLoaded || finishedRef.current) return;
+    const timer = setTimeout(() => {
+      if (finishedRef.current) return;
+      const pristine = currentStep === "basic" && JSON.stringify(form) === JSON.stringify(initialFormState);
+      if (pristine) {
+        void clearAccountDraft();
+        return;
+      }
+      void saveAccountDraft<WizardDraft>({
+        form,
+        step: currentStep,
+        discovery,
+        autoFilled: autoFilledRef.current,
+        detectedAuthMethods,
+        detectedOAuthProviderId,
+      });
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [draftLoaded, form, currentStep, discovery, detectedAuthMethods, detectedOAuthProviderId]);
+
+  // A passed test only counts for the settings it was run with.
+  useEffect(() => {
+    setImapTest({ state: "idle" });
+  }, [form.imapHost, form.imapPort, form.imapSecurity, form.imapUsername, form.email, form.password, form.acceptInvalidCerts, form.authMode, form.oauthAccessToken]);
+  useEffect(() => {
+    setSmtpTest({ state: "idle" });
+  }, [form.smtpHost, form.smtpPort, form.smtpSecurity, form.imapUsername, form.email, form.password, form.smtpPassword, form.samePassword, form.acceptInvalidCerts, form.authMode, form.oauthAccessToken]);
+
+  const startOver = useCallback(() => {
+    void clearAccountDraft();
+    autoFilledRef.current = null;
+    setForm(initialFormState);
+    setCurrentStep("basic");
+    setDiscovery({ status: "idle" });
+    setDetectedAuthMethods(["password"]);
+    setDetectedOAuthProviderId(null);
+    setOauthError(null);
+    setSaveError(null);
+    setRestoredDraft(false);
+  }, []);
 
   const currentStepIndex = steps.indexOf(currentStep);
 
@@ -143,28 +241,62 @@ export function AddImapAccount({
     [],
   );
 
-  const handleEmailBlur = useCallback(() => {
-    if (discoveryApplied) return;
-    const result = discoverSettings(form.email);
-    if (result && !form.imapHost && !form.smtpHost) {
+  /** Fill server fields unless the user has already typed their own. */
+  const applyServerSettings = useCallback((settings: ServerSettings, username?: string, acceptInvalidCerts?: boolean) => {
+    setForm((prev) => {
+      const auto = autoFilledRef.current;
+      const untouched =
+        (!prev.imapHost && !prev.smtpHost) ||
+        (!!auto && prev.imapHost === auto.imapHost && prev.smtpHost === auto.smtpHost);
+      if (!untouched) return prev;
+      autoFilledRef.current = { imapHost: settings.imapHost, smtpHost: settings.smtpHost };
+      return {
+        ...prev,
+        ...settings,
+        imapUsername: prev.imapUsername || username || "",
+        acceptInvalidCerts: acceptInvalidCerts ?? prev.acceptInvalidCerts,
+      };
+    });
+  }, []);
+
+  const handleEmailBlur = useCallback(async () => {
+    const email = form.email.trim();
+    const domain = extractDomain(email);
+    if (!domain || domain === discovery.domain) return;
+
+    const auto = autoFilledRef.current;
+    const hostsUntouched =
+      (!form.imapHost && !form.smtpHost) ||
+      (!!auto && form.imapHost === auto.imapHost && form.smtpHost === auto.smtpHost);
+    if (!hostsUntouched) return;
+
+    const known = findWellKnownProvider(domain);
+    if (known) {
+      applyServerSettings(known.settings, undefined, known.acceptInvalidCerts ?? false);
       setForm((prev) => ({
         ...prev,
-        imapHost: result.settings.imapHost,
-        imapPort: result.settings.imapPort,
-        imapSecurity: result.settings.imapSecurity,
-        smtpHost: result.settings.smtpHost,
-        smtpPort: result.settings.smtpPort,
-        smtpSecurity: result.settings.smtpSecurity,
-        acceptInvalidCerts: result.acceptInvalidCerts ?? false,
         // Auto-select OAuth2 if it's the only option (e.g. Outlook)
-        authMode: result.authMethods[0] === "oauth2" ? "oauth2" : prev.authMode,
-        oauthProvider: result.oauthProviderId ?? null,
+        authMode: known.authMethods[0] === "oauth2" ? "oauth2" : prev.authMode,
+        oauthProvider: known.oauthProviderId ?? null,
       }));
-      setDetectedAuthMethods(result.authMethods);
-      setDetectedOAuthProviderId(result.oauthProviderId ?? null);
-      setDiscoveryApplied(true);
+      setDetectedAuthMethods(known.authMethods);
+      setDetectedOAuthProviderId(known.oauthProviderId ?? null);
+      setDiscovery({ status: "done", domain, source: "known" });
+      return;
     }
-  }, [form.email, form.imapHost, form.smtpHost, discoveryApplied]);
+
+    setDetectedAuthMethods(["password"]);
+    setDetectedOAuthProviderId(null);
+    setDiscovery({ status: "looking", domain });
+    const found = await lookupAutoconfig(email);
+    if (found) {
+      applyServerSettings(found.settings, found.username);
+      setDiscovery({ status: "done", domain, source: "autoconfig", detail: found.source });
+    } else {
+      applyServerSettings(guessServerSettings(domain));
+      setDiscovery({ status: "done", domain, source: "guess" });
+    }
+  }, [form.email, form.imapHost, form.smtpHost, discovery.domain, applyServerSettings]);
 
   const handleImapSecurityChange = useCallback(
     (security: SecurityType) => {
@@ -197,6 +329,16 @@ export function AddImapAccount({
   const canAdvanceFromImap = form.imapHost.trim().length > 0 && form.imapPort > 0;
   const canAdvanceFromSmtp = form.smtpHost.trim().length > 0 && form.smtpPort > 0;
   const bothTestsPassed = imapTest.state === "success" && smtpTest.state === "success";
+
+  const stepIsValid: Record<Step, boolean> = {
+    basic: canAdvanceFromBasic,
+    imap: canAdvanceFromImap,
+    smtp: canAdvanceFromSmtp,
+    test: true,
+  };
+  /** A step can be opened once every step before it is filled in. */
+  const canOpenStep = (index: number): boolean =>
+    index <= currentStepIndex || steps.slice(0, index).every((st) => stepIsValid[st]);
 
   const goNext = useCallback(() => {
     const idx = steps.indexOf(currentStep);
@@ -384,11 +526,15 @@ export function AddImapAccount({
           smtpPort: form.smtpPort,
           smtpSecurity: form.smtpSecurity,
           authMethod: "password",
-          password: form.samePassword ? form.password : form.password,
+          password: form.password,
+          smtpPassword: form.samePassword ? null : form.smtpPassword,
           imapUsername,
           acceptInvalidCerts: form.acceptInvalidCerts,
         });
       }
+
+      finishedRef.current = true;
+      await clearAccountDraft();
 
       addAccount({
         id: accountId,
@@ -411,6 +557,7 @@ export function AddImapAccount({
       {steps.map((step, i) => {
         const isActive = i === currentStepIndex;
         const isCompleted = i < currentStepIndex;
+        const reachable = canOpenStep(i);
         return (
           <div key={step} className="flex items-center gap-1">
             {i > 0 && (
@@ -418,23 +565,80 @@ export function AddImapAccount({
                 className={`w-6 h-px ${isCompleted ? "bg-accent" : "bg-border-primary"}`}
               />
             )}
-            <div
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+            <button
+              type="button"
+              onClick={() => setCurrentStep(step)}
+              disabled={!reachable}
+              aria-current={isActive ? "step" : undefined}
+              title={reachable ? `Go to ${stepLabels[step]}` : "Fill in the earlier steps first"}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors disabled:cursor-not-allowed ${
                 isActive
                   ? "bg-accent/10 text-accent"
                   : isCompleted
-                    ? "text-accent"
-                    : "text-text-tertiary"
+                    ? "text-accent hover:bg-accent/10"
+                    : reachable
+                      ? "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      : "text-text-tertiary opacity-60"
               }`}
             >
               {stepIcons[step]}
               <span className="hidden sm:inline">{stepLabels[step]}</span>
-            </div>
+            </button>
           </div>
         );
       })}
     </div>
   );
+
+  const renderRestoredBanner = () =>
+    restoredDraft && (
+      <div className="flex items-center justify-between gap-3 mb-4 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20 text-xs text-text-secondary">
+        <span>Restored what you entered last time.</span>
+        <button type="button" onClick={startOver} className="text-accent hover:underline shrink-0">
+          Start over
+        </button>
+      </div>
+    );
+
+  const renderDiscoveryStatus = () => {
+    if (discovery.status === "looking") {
+      return (
+        <p className="flex items-center gap-1.5 text-xs text-text-tertiary mt-1">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Looking up server settings for {discovery.domain}…
+        </p>
+      );
+    }
+    if (discovery.status !== "done") return null;
+    if (discovery.source === "autoconfig") {
+      return (
+        <p className="flex items-center gap-1.5 text-xs text-success mt-1">
+          <CheckCircle2 className="w-3 h-3" />
+          Found server settings ({discovery.detail}).
+        </p>
+      );
+    }
+    if (discovery.source === "guess") {
+      return (
+        <p className="text-xs text-warning mt-1">
+          Couldn&apos;t find published settings for {discovery.domain}. We guessed the server names — check them
+          against your provider&apos;s instructions on the next steps.
+        </p>
+      );
+    }
+    return null;
+  };
+
+  const renderGuessWarning = () =>
+    discovery.status === "done" &&
+    discovery.source === "guess" &&
+    autoFilledRef.current &&
+    (form.imapHost === autoFilledRef.current.imapHost || form.smtpHost === autoFilledRef.current.smtpHost) && (
+      <p className="text-xs text-warning">
+        These server names are a guess for {discovery.domain}. If the connection test fails, look up your
+        provider&apos;s IMAP/SMTP settings.
+      </p>
+    );
 
   const renderAuthModeSelector = () => {
     const showOAuth = detectedAuthMethods.includes("oauth2") || form.authMode === "oauth2";
@@ -578,6 +782,7 @@ export function AddImapAccount({
           autoFocus
           disabled={isOAuth && hasOAuthTokens}
         />
+        {renderDiscoveryStatus()}
       </div>
 
       {renderAuthModeSelector()}
@@ -654,6 +859,7 @@ export function AddImapAccount({
 
   const renderImapStep = () => (
     <div className="space-y-4">
+      {renderGuessWarning()}
       {isOAuth && (
         <p className="text-xs text-text-tertiary">
           Server settings have been auto-configured for your provider. You can adjust them if needed.
@@ -729,6 +935,7 @@ export function AddImapAccount({
 
   const renderSmtpStep = () => (
     <div className="space-y-4">
+      {renderGuessWarning()}
       {isOAuth && (
         <p className="text-xs text-text-tertiary">
           Server settings have been auto-configured for your provider. You can adjust them if needed.
@@ -906,7 +1113,12 @@ export function AddImapAccount({
     >
       <div className="p-4" onKeyDown={handleKeyDown}>
         {renderStepIndicator()}
-        {renderStepContent()}
+        {renderRestoredBanner()}
+        {draftLoaded ? renderStepContent() : (
+          <div className="flex justify-center py-10">
+            <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
+          </div>
+        )}
 
         <div className="flex items-center justify-between mt-6">
           <button

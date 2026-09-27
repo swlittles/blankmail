@@ -7,7 +7,37 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
 };
 
+use std::time::Duration;
+
 use super::types::{SmtpConfig, SmtpSendResult};
+
+/// Fail fast on a wrong host/port instead of lettre's 60s default.
+const SMTP_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Describe an SMTP failure with the server it was talking to and a hint for
+/// the most common causes, so the setup wizard can show something actionable.
+fn describe_smtp_error(config: &SmtpConfig, err: &lettre::transport::smtp::Error) -> String {
+    let security = match config.security.as_str() {
+        "tls" => "SSL/TLS",
+        "starttls" => "STARTTLS",
+        _ => "no encryption",
+    };
+    let text = err.to_string();
+    let hint = if text.contains("lookup address") || text.contains("resolve") {
+        " — this server name doesn't exist. Check the SMTP server name."
+    } else if text.contains("incomplete response") {
+        " — the security setting probably doesn't match the port (SSL/TLS is usually 465, STARTTLS 587)."
+    } else if err.is_timeout() {
+        " — timed out. Check the server name and port, and that the security setting matches the port (SSL/TLS is usually 465, STARTTLS 587)."
+    } else if err.is_permanent() && err.status().map(|c| c.to_string().starts_with("535")).unwrap_or(false) {
+        " — the server rejected the username or password. Some providers need an app-specific password for sending."
+    } else if err.is_tls() {
+        " — TLS failed. Check that the security setting matches the port (SSL/TLS is usually 465, STARTTLS 587)."
+    } else {
+        ""
+    };
+    format!("{}:{} ({security}): {err}{hint}", config.host, config.port)
+}
 
 /// Decode a base64url-encoded string (Gmail format) to raw bytes.
 fn decode_base64url(input: &str) -> Result<Vec<u8>, String> {
@@ -36,7 +66,8 @@ fn build_transport(
                 .map_err(|e| format!("SMTP relay error: {}", e))?
                 .port(config.port)
                 .credentials(credentials)
-                .authentication(auth_mechanisms);
+                .authentication(auth_mechanisms)
+                .timeout(Some(SMTP_TIMEOUT));
 
             if config.accept_invalid_certs {
                 let tls_params = TlsParametersBuilder::new(config.host.clone())
@@ -44,7 +75,7 @@ fn build_transport(
                     .dangerous_accept_invalid_hostnames(true)
                     .build()
                     .map_err(|e| format!("SMTP TLS params error: {}", e))?;
-                builder = builder.tls(Tls::Required(tls_params));
+                builder = builder.tls(Tls::Wrapper(tls_params));
             }
 
             builder.build()
@@ -55,7 +86,8 @@ fn build_transport(
                 .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
                 .port(config.port)
                 .credentials(credentials)
-                .authentication(auth_mechanisms);
+                .authentication(auth_mechanisms)
+                .timeout(Some(SMTP_TIMEOUT));
 
             if config.accept_invalid_certs {
                 let tls_params = TlsParametersBuilder::new(config.host.clone())
@@ -74,6 +106,7 @@ fn build_transport(
                 .port(config.port)
                 .credentials(credentials)
                 .authentication(auth_mechanisms)
+                .timeout(Some(SMTP_TIMEOUT))
                 .build()
         }
     };
@@ -162,7 +195,7 @@ pub async fn send_raw_email(
             success: true,
             message: "Email sent successfully".to_string(),
         })
-        .map_err(|e| format!("SMTP send error: {}", e))
+        .map_err(|e| format!("SMTP send error: {}", describe_smtp_error(config, &e)))
 }
 
 /// Test SMTP connectivity by connecting, authenticating, and disconnecting.
@@ -177,10 +210,13 @@ pub async fn test_connection(config: &SmtpConfig) -> Result<SmtpSendResult, Stri
             message: if success {
                 "Connection successful".to_string()
             } else {
-                "Connection failed".to_string()
+                format!(
+                    "{}:{} accepted the connection but did not respond to a test command",
+                    config.host, config.port
+                )
             },
         })
-        .map_err(|e| format!("SMTP test error: {}", e))
+        .map_err(|e| describe_smtp_error(config, &e))
 }
 
 #[cfg(test)]
@@ -234,3 +270,4 @@ mod tests {
         assert_eq!(envelope.to().len(), 2);
     }
 }
+
