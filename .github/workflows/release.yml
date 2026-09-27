@@ -91,7 +91,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: "BlankMail v__VERSION__"
           releaseBody: "See the assets below to download for your platform."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: ${{ matrix.args }}
@@ -180,7 +180,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: "BlankMail v__VERSION__"
           releaseBody: "See the assets below to download for your platform."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin
@@ -215,10 +215,19 @@ jobs:
             > xattr -cr /Applications/BlankMail.app
             > ```
             > Or right-click the app and select "Open" on first launch.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin
+
+      - name: Verify signature, notarization and Gatekeeper
+        if: steps.signing-check.outputs.has_signing == 'true'
+        run: |
+          APP=src-tauri/target/universal-apple-darwin/release/bundle/macos/BlankMail.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier|flags="
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
 
       - name: Clean up keychain
         if: always() && steps.signing-check.outputs.has_signing == 'true'
