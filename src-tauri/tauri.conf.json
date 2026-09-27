@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BlankMail",
+  "version": "0.1.0",
+  "identifier": "com.swlittles.blankmail",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "BlankMail",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "splashscreen",
+        "url": "splashscreen.html",
+        "width": 400,
+        "height": 300,
+        "decorations": false,
+        "resizable": false,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src https://www.googleapis.com https://oauth2.googleapis.com https://www.gravatar.com https://login.microsoftonline.com https://graph.microsoft.com https://api.login.yahoo.com https://openrouter.ai; img-src 'self' data: https://www.gravatar.com https://lh3.googleusercontent.com https://*.googleusercontent.com; font-src 'self' data:; frame-src 'self'"
+    },
+    "trayIcon": null
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "minimumSystemVersion": "10.13"
+    }
+  },
+  "plugins": {
+    "sql": {
+      "preload": [
+        "sqlite:blankmail.db"
+      ]
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIwQzUyNjMwNjJFOTNFMUIKUldRYlB1bGlNQ2JGSUxwTWJ1WjkvQ0JOWmF0SXcvblB3eURnWmVBMjRYTDNJVFVvVzNLQUw3RlMK",
+      "endpoints": [
+        "https://github.com/swlittles/blankmail/releases/latest/download/latest.json"
+      ]
+    },
+    "deep-link": {
+      "mobile": [],
+      "desktop": {
+        "schemes": [
+          "mailto"
+        ]
+      }
+    }
+  }
+}
