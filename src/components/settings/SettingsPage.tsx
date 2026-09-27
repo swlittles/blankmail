@@ -1625,7 +1625,7 @@ function AboutTab() {
             </button>
           </p>
           <p className="text-xs text-text-tertiary leading-relaxed">
-            Copyright 2026 Stephen Little. BlankMail is derived from Velo (Copyright 2025 Velo Mail), used and modified under the Apache 2.0 license. This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+            Copyright 2026 Stephen Little. You may use, distribute, and modify this software under the terms of the Apache 2.0 license. This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
           </p>
         </div>
       </Section>
