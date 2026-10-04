@@ -24,7 +24,8 @@ function mapImapPhase(phase: string): "labels" | "threads" | "messages" | "done"
 
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let syncPromise: Promise<void> | null = null;
-let pendingAccountIds: string[] | null = null;
+/** Accounts queued while a sync runs → whether any queued request wanted catch-up. */
+let pendingAccounts: Map<string, boolean> | null = null;
 
 export type SyncStatusCallback = (
   accountId: string,
@@ -81,8 +82,10 @@ async function syncGmailAccount(accountId: string): Promise<void> {
 
 /**
  * Run a sync for a single IMAP account (initial or delta).
+ * `catchUp` also fetches any server messages within the sync period that are
+ * missing locally, not just ones newer than the last seen UID.
  */
-async function syncImapAccount(accountId: string): Promise<void> {
+async function syncImapAccount(accountId: string, catchUp: boolean): Promise<void> {
   const account = await getAccount(accountId);
 
   if (!account) {
@@ -99,7 +102,7 @@ async function syncImapAccount(accountId: string): Promise<void> {
 
   if (account.history_id) {
     // Delta sync — IMAP uses folder-level UID tracking
-    const result = await imapDeltaSync(accountId, syncDays);
+    const result = await imapDeltaSync(accountId, syncDays, { catchUp });
 
     // Recovery: if delta sync found nothing new but the DB has no threads,
     // the previous initial sync likely failed or stored data incorrectly.
@@ -209,7 +212,7 @@ async function syncCalendarForAccount(accountId: string): Promise<void> {
  * Run a sync for a single account (initial or delta).
  * Routes to Gmail or IMAP sync based on account provider.
  */
-async function syncAccountInternal(accountId: string): Promise<void> {
+async function syncAccountInternal(accountId: string, catchUp: boolean): Promise<void> {
   try {
     const account = await getAccount(accountId);
 
@@ -229,7 +232,7 @@ async function syncAccountInternal(accountId: string): Promise<void> {
     }
 
     if (account.provider === "imap") {
-      await syncImapAccount(accountId);
+      await syncImapAccount(accountId, catchUp);
     } else {
       await syncGmailAccount(accountId);
     }
@@ -250,29 +253,34 @@ async function syncAccountInternal(accountId: string): Promise<void> {
   }
 }
 
-async function runSync(accountIds: string[]): Promise<void> {
+async function runSync(accountIds: string[], catchUp = false): Promise<void> {
+  return runSyncBatch(new Map(accountIds.map((id) => [id, catchUp])));
+}
+
+async function runSyncBatch(accounts: Map<string, boolean>): Promise<void> {
   if (syncPromise) {
     // Queue these accounts, merging with any already-pending IDs
-    const existing = new Set(pendingAccountIds ?? []);
-    for (const id of accountIds) existing.add(id);
-    pendingAccountIds = [...existing];
+    pendingAccounts ??= new Map();
+    for (const [id, catchUp] of accounts) {
+      pendingAccounts.set(id, catchUp || (pendingAccounts.get(id) ?? false));
+    }
     return syncPromise;
   }
 
   syncPromise = (async () => {
     try {
-      for (const id of accountIds) {
-        await syncAccountInternal(id);
+      for (const [id, catchUp] of accounts) {
+        await syncAccountInternal(id, catchUp);
       }
     } finally {
       syncPromise = null;
     }
 
     // Drain the queue — if something was queued while we were syncing, run it now
-    if (pendingAccountIds) {
-      const queued = pendingAccountIds;
-      pendingAccountIds = null;
-      await runSync(queued);
+    if (pendingAccounts) {
+      const queued = pendingAccounts;
+      pendingAccounts = null;
+      await runSyncBatch(queued);
     }
   })();
 
@@ -296,8 +304,9 @@ export function startBackgroundSync(accountIds: string[], skipImmediateSync = fa
   stopBackgroundSync();
 
   if (!skipImmediateSync) {
-    // Immediate sync
-    runSync(accountIds);
+    // Immediate sync — with catch-up, so anything missed while the app was
+    // closed (or by an earlier faulty check) is fetched on launch.
+    runSync(accountIds, true);
   }
 
   // Periodic sync
@@ -322,6 +331,14 @@ export function stopBackgroundSync(): void {
  */
 export async function triggerSync(accountIds: string[]): Promise<void> {
   await runSync(accountIds);
+}
+
+/**
+ * User-initiated refresh: sync now and also fetch any recent mail missing
+ * locally (IMAP), rather than trusting the incremental UID check alone.
+ */
+export async function refreshMail(accountIds: string[]): Promise<void> {
+  await runSync(accountIds, true);
 }
 
 /**

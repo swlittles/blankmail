@@ -18,6 +18,7 @@ import {
   stopBackgroundSync,
   syncAccount,
   triggerSync,
+  refreshMail,
   onSyncStatus,
 } from "./services/gmail/syncManager";
 import { initializeClients } from "./services/gmail/tokenManager";
@@ -177,7 +178,7 @@ export default function App() {
         const accounts = useAccountStore.getState().accounts;
         const activeIds = accounts.filter((a) => a.isActive).map((a) => a.id);
         if (activeIds.length > 0) {
-          triggerSync(activeIds);
+          refreshMail(activeIds);
         }
       }).then((fn) => { unlisten = fn; });
     });

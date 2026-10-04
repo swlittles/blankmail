@@ -92,6 +92,8 @@ export interface DeltaCheckRequest {
   folder: string;
   last_uid: number;
   uidvalidity: number;
+  /** `DD-Mon-YYYY` — also return every UID received since this date. */
+  since_date?: string;
 }
 
 export interface DeltaCheckResult {
@@ -99,6 +101,8 @@ export interface DeltaCheckResult {
   uidvalidity: number;
   new_uids: number[];
   uidvalidity_changed: boolean;
+  /** UIDs matching `since_date`; empty when it wasn't requested. */
+  recent_uids?: number[];
 }
 
 // ---------- SMTP types ----------

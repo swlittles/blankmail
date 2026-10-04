@@ -39,7 +39,7 @@ import {
   Code,
   RefreshCw,
 } from "lucide-react";
-import { triggerSync } from "@/services/gmail/syncManager";
+import { refreshMail } from "@/services/gmail/syncManager";
 import { useUIStore } from "@/stores/uiStore";
 import { setThreadCategory, ALL_CATEGORIES } from "@/services/db/threadCategories";
 
@@ -133,7 +133,7 @@ function SidebarLabelMenu({
     if (!activeAccountId) return;
     const labelId = data["labelId"] as string | undefined;
     useUIStore.getState().setSyncingFolder(labelId ?? "label");
-    triggerSync([activeAccountId]);
+    refreshMail([activeAccountId]);
   };
 
   const items: ContextMenuItem[] = [
@@ -177,7 +177,7 @@ function SidebarNavMenu({
   const handleSync = () => {
     if (!activeAccountId) return;
     useUIStore.getState().setSyncingFolder(navId);
-    triggerSync([activeAccountId]);
+    refreshMail([activeAccountId]);
   };
 
   const items: ContextMenuItem[] = [

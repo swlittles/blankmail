@@ -189,6 +189,7 @@ Key tables (37 total): `accounts` (with `provider` "gmail_api"|"imap", IMAP/SMTP
 - **IMAP message IDs**: Format is `imap-{accountId}-{folder}-{uid}` — not the RFC Message-ID header
 - **IMAP security mapping**: UI shows "SSL/TLS", "STARTTLS", "None" but config stores "ssl", "starttls", "none"
 - **IMAP UIDVALIDITY**: If UIDVALIDITY changes on a folder, all cached UIDs are invalid — triggers full resync of that folder
+- **IMAP new-mail search**: Delta checks must use `UID SEARCH UID n:*` — a bare `n:*` is a sequence-number set and silently misses mail once a folder has had deletions. Manual refreshes (`refreshMail`: refresh button, F5, tray, Settings) and the startup sync run a catch-up pass that also fetches any server UIDs within the sync period missing locally; the 60s background sync stays UID-only
 - **IMAP folders vs labels**: IMAP has no native labels; folders are mapped to Gmail-style labels via `folderMapper.ts` using special-use flags and well-known name matching
 - **IMAP passwords**: Encrypted with AES-256-GCM in SQLite (same crypto as OAuth tokens)
 - **Credential encryption**: `utils/crypto.ts` calls the Rust `encrypt_secret`/`decrypt_secret` commands (`src-tauri/src/secrets.rs`). The AES key lives in the OS keychain (service `com.swlittles.blankmail`) and never reaches the webview or disk. `cargo test -- --ignored` runs the real-keychain test

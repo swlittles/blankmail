@@ -366,6 +366,15 @@ pub async fn fetch_message_body(
     parse_message(&parser, raw, uid, folder, raw_size, is_read, is_starred, is_draft, None)
 }
 
+/// `UID SEARCH` criteria for messages newer than `last_uid`.
+///
+/// The `UID` keyword matters: a bare `n:*` is a *sequence-number* set, which
+/// drifts from UIDs as soon as a folder has had deletions, so new mail was
+/// silently missed.
+fn new_uids_query(last_uid: u32) -> String {
+    format!("UID {}:*", last_uid.saturating_add(1))
+}
+
 /// Get UIDs of messages newer than `last_uid`.
 pub async fn fetch_new_uids(
     session: &mut ImapSession,
@@ -377,7 +386,7 @@ pub async fn fetch_new_uids(
         .map_err(|_| format!("SELECT {folder} timed out after {}s — check your server settings or network connection", IMAP_CMD_TIMEOUT.as_secs()))?
         .map_err(|e| format!("SELECT {folder} failed: {e}"))?;
 
-    let query = format!("{}:*", last_uid + 1);
+    let query = new_uids_query(last_uid);
     let uids = tokio::time::timeout(IMAP_SEARCH_TIMEOUT, session.uid_search(&query))
         .await
         .map_err(|_| format!("UID SEARCH timed out after {}s — check your server settings or network connection", IMAP_SEARCH_TIMEOUT.as_secs()))?
@@ -710,12 +719,13 @@ pub async fn delta_check_folders(
                 uidvalidity: current_uidvalidity,
                 new_uids: vec![],
                 uidvalidity_changed: true,
+                recent_uids: vec![],
             });
             continue;
         }
 
         // UID SEARCH for messages newer than last_uid
-        let query = format!("{}:*", req.last_uid + 1);
+        let query = new_uids_query(req.last_uid);
         let new_uids = match tokio::time::timeout(IMAP_SEARCH_TIMEOUT, session.uid_search(&query)).await {
             Ok(Ok(uids)) => {
                 let mut result: Vec<u32> = uids.into_iter().filter(|&u| u > req.last_uid).collect();
@@ -732,11 +742,36 @@ pub async fn delta_check_folders(
             }
         };
 
+        // Optional catch-up search: everything received since the date, so the
+        // caller can fetch messages the UID check never saw.
+        let recent_uids = match &req.since_date {
+            Some(date) => {
+                let query = format!("SINCE {date}");
+                match tokio::time::timeout(IMAP_SEARCH_TIMEOUT, session.uid_search(&query)).await {
+                    Ok(Ok(uids)) => {
+                        let mut result: Vec<u32> = uids.into_iter().collect();
+                        result.sort();
+                        result
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("delta_check: UID SEARCH {query} {} failed: {e}", req.folder);
+                        vec![]
+                    }
+                    Err(_) => {
+                        log::warn!("delta_check: UID SEARCH {query} {} timed out after {}s", req.folder, IMAP_SEARCH_TIMEOUT.as_secs());
+                        vec![]
+                    }
+                }
+            }
+            None => vec![],
+        };
+
         results.push(DeltaCheckResult {
             folder: req.folder.clone(),
             uidvalidity: current_uidvalidity,
             new_uids,
             uidvalidity_changed: false,
+            recent_uids,
         });
     }
 
@@ -1882,6 +1917,13 @@ fn format_address_list(addr: Option<&mail_parser::Address>) -> Option<String> {
 #[cfg(test)]
 mod raw_command_tests {
     use super::*;
+
+    #[test]
+    fn new_uids_query_searches_by_uid() {
+        assert_eq!(new_uids_query(41), "UID 42:*");
+        assert_eq!(new_uids_query(0), "UID 1:*");
+        assert_eq!(new_uids_query(u32::MAX), format!("UID {}:*", u32::MAX));
+    }
 
     #[test]
     fn quotes_and_escapes() {

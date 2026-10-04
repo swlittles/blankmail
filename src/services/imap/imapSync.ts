@@ -16,7 +16,7 @@ import {
 } from "./folderMapper";
 import type { ParsedMessage, ParsedAttachment } from "../gmail/messageParser";
 import type { SyncResult } from "../email/types";
-import { upsertMessage, updateMessageThreadIds } from "../db/messages";
+import { upsertMessage, updateMessageThreadIds, getImapUidsForFolder } from "../db/messages";
 import { upsertThread, setThreadLabels, deleteThread } from "../db/threads";
 import { upsertAttachment } from "../db/attachments";
 import { getAccount, updateAccountSyncState } from "../db/accounts";
@@ -820,17 +820,31 @@ export async function imapInitialSync(
 // Delta sync
 // ---------------------------------------------------------------------------
 
+export interface ImapDeltaSyncOptions {
+  /**
+   * Also compare every message on the server within the sync period against
+   * the local DB and fetch any that are missing — recovers mail the UID-based
+   * check skipped. Costs one extra UID SEARCH per folder (no bodies).
+   */
+  catchUp?: boolean;
+}
+
 /**
  * Perform delta sync for an IMAP account.
  * Fetches only new messages since the last sync using stored UID state.
  */
-export async function imapDeltaSync(accountId: string, daysBack = 365): Promise<SyncResult> {
+export async function imapDeltaSync(
+  accountId: string,
+  daysBack = 365,
+  options: ImapDeltaSyncOptions = {},
+): Promise<SyncResult> {
   const account = await getAccount(accountId);
   if (!account) {
     throw new Error(`Account ${accountId} not found`);
   }
 
   const config = buildImapConfig(account);
+  const catchUpSince = options.catchUp ? computeSinceDate(daysBack) : undefined;
 
   // Get all folders we've synced before
   const syncStates = await getAllFolderSyncStates(accountId);
@@ -917,6 +931,7 @@ export async function imapDeltaSync(accountId: string, daysBack = 365): Promise<
         folder: folder.raw_path,
         last_uid: savedState.last_uid,
         uidvalidity: savedState.uidvalidity ?? 0,
+        since_date: catchUpSince,
       };
     });
 
@@ -946,11 +961,15 @@ export async function imapDeltaSync(accountId: string, daysBack = 365): Promise<
             });
           } else {
             const newUids = await imapFetchNewUids(config, folder.raw_path, savedState.last_uid);
+            const recentUids = catchUpSince
+              ? (await imapSearchFolder(config, folder.raw_path, catchUpSince)).uids
+              : [];
             deltaResultMap.set(folder.raw_path, {
               folder: folder.raw_path,
               uidvalidity: currentStatus.uidvalidity,
               new_uids: newUids,
               uidvalidity_changed: false,
+              recent_uids: recentUids,
             });
           }
         } catch (folderErr) {
@@ -1006,13 +1025,28 @@ export async function imapDeltaSync(accountId: string, daysBack = 365): Promise<
           continue;
         }
 
-        // Normal delta: fetch the new UIDs returned by delta check
-        if (deltaResult.new_uids.length === 0) continue;
+        // Normal delta: fetch the new UIDs returned by delta check, plus (on
+        // catch-up) any recent server UIDs we don't have locally.
+        const uidsToFetch = new Set(deltaResult.new_uids);
+        if (deltaResult.recent_uids?.length) {
+          const localUids = await getImapUidsForFolder(accountId, folder.raw_path);
+          let missed = 0;
+          for (const uid of deltaResult.recent_uids) {
+            if (!localUids.has(uid) && !uidsToFetch.has(uid)) {
+              uidsToFetch.add(uid);
+              missed++;
+            }
+          }
+          if (missed > 0) {
+            console.log(`[imapSync] Catch-up: ${missed} missing messages in ${folder.path}`);
+          }
+        }
+        if (uidsToFetch.size === 0) continue;
 
         const { messages, lastUid, uidvalidity } = await fetchMessagesInBatches(
           config,
           folder.raw_path,
-          deltaResult.new_uids,
+          [...uidsToFetch].sort((a, b) => a - b),
         );
 
         for (const msg of messages) {

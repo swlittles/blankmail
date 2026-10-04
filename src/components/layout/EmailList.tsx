@@ -14,6 +14,7 @@ import { getCategoriesForThreads, getCategoryUnreadCounts } from "@/services/db/
 import { getActiveFollowUpThreadIds } from "@/services/db/followUpReminders";
 import { getBundleRules, getHeldThreadIds, getBundleSummaries, type DbBundleRule } from "@/services/db/bundleRules";
 import { getGmailClient } from "@/services/gmail/tokenManager";
+import { refreshMail } from "@/services/gmail/syncManager";
 import { useLabelStore } from "@/stores/labelStore";
 import { useSmartFolderStore } from "@/stores/smartFolderStore";
 import { useContextMenuStore } from "@/stores/contextMenuStore";
@@ -21,7 +22,7 @@ import { useComposerStore } from "@/stores/composerStore";
 import { getMessagesForThread } from "@/services/db/messages";
 import { getSmartFolderSearchQuery, mapSmartFolderRows, type SmartFolderRow } from "@/services/search/smartFolderQuery";
 import { getDb } from "@/services/db/connection";
-import { Archive, Trash2, X, Ban, Filter, ChevronRight, Package, FolderSearch } from "lucide-react";
+import { Archive, Trash2, X, Ban, Filter, ChevronRight, Package, FolderSearch, RefreshCw } from "lucide-react";
 import { EmptyState } from "../ui/EmptyState";
 import {
   InboxClearIllustration,
@@ -55,6 +56,7 @@ export function EmailList({ width, listRef }: { width?: number; listRef?: React.
   const clearMultiSelect = useThreadStore((s) => s.clearMultiSelect);
   const selectAll = useThreadStore((s) => s.selectAll);
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const activeLabel = useActiveLabel();
   const readFilter = useUIStore((s) => s.readFilter);
   const setReadFilter = useUIStore((s) => s.setReadFilter);
@@ -482,6 +484,17 @@ export function EmailList({ width, listRef }: { width?: number; listRef?: React.
     return () => container.removeEventListener("scroll", handleScroll);
   }, [loadMore]);
 
+  const handleRefresh = async () => {
+    const activeIds = useAccountStore.getState().accounts.filter((a) => a.isActive).map((a) => a.id);
+    if (activeIds.length === 0 || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshMail(activeIds);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div
       ref={listRef}
@@ -516,15 +529,26 @@ export function EmailList({ width, listRef }: { width?: number; listRef?: React.
             {filteredThreads.length} conversation{filteredThreads.length !== 1 ? "s" : ""}
           </span>
         </div>
-        <select
-          value={readFilter}
-          onChange={(e) => setReadFilter(e.target.value as "all" | "read" | "unread")}
-          className="text-xs bg-bg-tertiary text-text-secondary px-2 py-1 rounded border border-border-primary"
-        >
-          <option value="all">All</option>
-          <option value="unread">Unread</option>
-          <option value="read">Read</option>
-        </select>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Check for new mail (F5)"
+            aria-label="Check for new mail"
+            className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded transition-colors disabled:opacity-60"
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : undefined} />
+          </button>
+          <select
+            value={readFilter}
+            onChange={(e) => setReadFilter(e.target.value as "all" | "read" | "unread")}
+            className="text-xs bg-bg-tertiary text-text-secondary px-2 py-1 rounded border border-border-primary"
+          >
+            <option value="all">All</option>
+            <option value="unread">Unread</option>
+            <option value="read">Read</option>
+          </select>
+        </div>
       </div>
 
       {/* Category tabs (inbox + split mode only) */}

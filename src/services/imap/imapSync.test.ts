@@ -40,6 +40,7 @@ vi.mock("./folderMapper", () => ({
 vi.mock("../db/messages", () => ({
   upsertMessage: vi.fn(),
   updateMessageThreadIds: vi.fn(),
+  getImapUidsForFolder: vi.fn(async () => new Set<number>()),
 }));
 vi.mock("../db/threads", () => ({
   upsertThread: vi.fn(),
@@ -64,7 +65,7 @@ vi.mock("../db/pendingOperations", () => ({
   getPendingOpsForResource: vi.fn(() => []),
 }));
 
-import { imapMessageToParsedMessage, imapInitialSync, formatImapDate, computeSinceDate, isConnectionError } from "./imapSync";
+import { imapMessageToParsedMessage, imapInitialSync, imapDeltaSync, formatImapDate, computeSinceDate, isConnectionError } from "./imapSync";
 import {
   createMockImapMessage,
   createMockImapAccount,
@@ -72,10 +73,11 @@ import {
   createMockImapFolderStatus,
   createMockImapFetchResult,
 } from "@/test/mocks";
-import { imapListFolders, imapSearchFolder, imapFetchMessages } from "./tauriCommands";
+import { imapListFolders, imapSearchFolder, imapFetchMessages, imapDeltaCheck } from "./tauriCommands";
 import { getAccount } from "../db/accounts";
 import { withTransaction } from "../db/connection";
-import { upsertMessage, updateMessageThreadIds } from "../db/messages";
+import { upsertMessage, updateMessageThreadIds, getImapUidsForFolder } from "../db/messages";
+import { getAllFolderSyncStates, upsertFolderSyncState } from "../db/folderSyncState";
 import { upsertThread, deleteThread } from "../db/threads";
 import { upsertAttachment } from "../db/attachments";
 import { getPendingOpsForResource } from "../db/pendingOperations";
@@ -744,5 +746,63 @@ describe("imapInitialSync — placeholder cleanup", () => {
     // Threading should merge the two messages into one thread,
     // so at least one placeholder thread (the one not chosen as thread ID) should be deleted
     expect(mockDeleteThread).toHaveBeenCalled();
+  });
+});
+
+describe("imapDeltaSync — catch-up", () => {
+  const mockGetAccount = vi.mocked(getAccount);
+  const mockImapListFolders = vi.mocked(imapListFolders);
+  const mockImapDeltaCheck = vi.mocked(imapDeltaCheck);
+  const mockImapFetchMessages = vi.mocked(imapFetchMessages);
+  const mockGetAllFolderSyncStates = vi.mocked(getAllFolderSyncStates);
+  const mockGetImapUidsForFolder = vi.mocked(getImapUidsForFolder);
+  const mockUpsertFolderSyncState = vi.mocked(upsertFolderSyncState);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetAccount.mockResolvedValue(createMockImapAccount({ id: "acc-1" }));
+    mockImapListFolders.mockResolvedValue([
+      createMockImapFolder({ path: "INBOX", raw_path: "INBOX", exists: 3 }),
+    ]);
+    mockGetAllFolderSyncStates.mockResolvedValue([
+      { account_id: "acc-1", folder_path: "INBOX", uidvalidity: 7, last_uid: 10, modseq: null, last_sync_at: 0 },
+    ]);
+    mockImapFetchMessages.mockImplementation(async (_config, _folder, uids) =>
+      createMockImapFetchResult(
+        uids.map((uid) => createMockImapMessage({ uid, message_id: `<m${uid}@test>`, date: Math.floor(Date.now() / 1000) })),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    mockImapDeltaCheck.mockReset();
+    mockImapFetchMessages.mockReset();
+    mockImapListFolders.mockReset();
+  });
+
+  it("only asks for recent UIDs when catch-up is requested", async () => {
+    mockImapDeltaCheck.mockResolvedValue([
+      { folder: "INBOX", uidvalidity: 7, new_uids: [], uidvalidity_changed: false },
+    ]);
+
+    await imapDeltaSync("acc-1", 30);
+
+    expect(mockImapDeltaCheck.mock.calls[0]![1][0]!.since_date).toBeUndefined();
+    expect(mockImapFetchMessages).not.toHaveBeenCalled();
+  });
+
+  it("fetches recent server UIDs missing locally alongside new ones", async () => {
+    mockImapDeltaCheck.mockResolvedValue([
+      { folder: "INBOX", uidvalidity: 7, new_uids: [12], uidvalidity_changed: false, recent_uids: [8, 9, 10, 12] },
+    ]);
+    mockGetImapUidsForFolder.mockResolvedValue(new Set([8, 10]));
+
+    const result = await imapDeltaSync("acc-1", 30, { catchUp: true });
+
+    expect(mockImapDeltaCheck.mock.calls[0]![1][0]!.since_date).toBe(computeSinceDate(30));
+    expect(mockGetImapUidsForFolder).toHaveBeenCalledWith("acc-1", "INBOX");
+    expect(mockImapFetchMessages).toHaveBeenCalledWith(expect.anything(), "INBOX", [9, 12]);
+    expect(result.messages).toHaveLength(2);
+    expect(mockUpsertFolderSyncState).toHaveBeenCalledWith(expect.objectContaining({ folder_path: "INBOX", last_uid: 12 }));
   });
 });

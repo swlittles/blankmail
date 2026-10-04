@@ -52,16 +52,19 @@ import {
   startBackgroundSync,
   stopBackgroundSync,
   triggerSync,
+  refreshMail,
   onSyncStatus,
 } from "./syncManager";
 import { getAccount } from "../db/accounts";
 import { getGmailClient } from "./tokenManager";
 import { initialSync, deltaSync } from "./sync";
+import { imapDeltaSync } from "../imap/imapSync";
 
 const mockGetAccount = vi.mocked(getAccount);
 const mockGetGmailClient = vi.mocked(getGmailClient);
 const mockInitialSync = vi.mocked(initialSync);
 const mockDeltaSync = vi.mocked(deltaSync);
+const mockImapDeltaSync = vi.mocked(imapDeltaSync);
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -241,6 +244,46 @@ describe("syncManager", () => {
 
       // existing account's delta sync ran BEFORE new account's initial sync
       expect(syncOrder).toEqual(["delta-existing", "initial-new"]);
+    });
+  });
+
+  describe("refreshMail (IMAP catch-up)", () => {
+    const imapAccount = (id: string) => ({
+      ...makeGmailAccount(id, "imap-synced-1"),
+      provider: "imap" as const,
+      auth_method: "password",
+    });
+
+    beforeEach(() => {
+      mockGetAccount.mockImplementation(async (id: string) => imapAccount(id));
+      // Non-empty result skips the zero-thread recovery path
+      mockImapDeltaSync.mockResolvedValue({ messages: [{} as never] });
+    });
+
+    it("requests catch-up for a manual refresh", async () => {
+      await refreshMail(["a1"]);
+      expect(mockImapDeltaSync).toHaveBeenCalledWith("a1", 365, { catchUp: true });
+    });
+
+    it("does not request catch-up for a plain triggerSync", async () => {
+      await triggerSync(["a1"]);
+      expect(mockImapDeltaSync).toHaveBeenCalledWith("a1", 365, { catchUp: false });
+    });
+
+    it("keeps catch-up when a refresh is queued behind a running sync", async () => {
+      let release!: () => void;
+      mockImapDeltaSync.mockImplementationOnce(
+        () => new Promise((r) => { release = () => r({ messages: [{} as never] }); }),
+      );
+
+      const background = triggerSync(["a1"]);
+      await wait(0);
+      const manual = refreshMail(["a1"]);
+      release();
+      await Promise.all([background, manual]);
+
+      expect(mockImapDeltaSync).toHaveBeenNthCalledWith(1, "a1", 365, { catchUp: false });
+      expect(mockImapDeltaSync).toHaveBeenNthCalledWith(2, "a1", 365, { catchUp: true });
     });
   });
 

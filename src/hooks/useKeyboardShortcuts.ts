@@ -13,7 +13,7 @@ import { getGmailClient } from "@/services/gmail/tokenManager";
 import { getMessagesForThread } from "@/services/db/messages";
 import { parseUnsubscribeUrl } from "@/components/email/MessageItem";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { triggerSync } from "@/services/gmail/syncManager";
+import { refreshMail } from "@/services/gmail/syncManager";
 
 /**
  * Parse a key binding string and check if it matches a keyboard event.
@@ -481,7 +481,7 @@ async function executeAction(actionId: string): Promise<void> {
       if (activeAccountId) {
         const currentLabel = getActiveLabel();
         useUIStore.getState().setSyncingFolder(currentLabel);
-        triggerSync([activeAccountId]);
+        refreshMail([activeAccountId]);
       }
       break;
     }

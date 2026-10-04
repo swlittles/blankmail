@@ -109,6 +109,10 @@ pub struct DeltaCheckRequest {
     pub folder: String,
     pub last_uid: u32,
     pub uidvalidity: u32,
+    /// When set (`DD-Mon-YYYY`), also return every UID received since this date
+    /// so the caller can fetch anything the UID-based check missed.
+    #[serde(default)]
+    pub since_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,4 +121,7 @@ pub struct DeltaCheckResult {
     pub uidvalidity: u32,
     pub new_uids: Vec<u32>,
     pub uidvalidity_changed: bool,
+    /// UIDs matching `since_date`; empty when it wasn't requested.
+    #[serde(default)]
+    pub recent_uids: Vec<u32>,
 }

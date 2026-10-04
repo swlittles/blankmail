@@ -144,6 +144,21 @@ export async function updateMessageThreadIds(
   }
 }
 
+/**
+ * UIDs already stored locally for one IMAP folder.
+ */
+export async function getImapUidsForFolder(
+  accountId: string,
+  folder: string,
+): Promise<Set<number>> {
+  const db = await getDb();
+  const rows = await db.select<{ imap_uid: number }[]>(
+    "SELECT imap_uid FROM messages WHERE account_id = $1 AND imap_folder = $2 AND imap_uid IS NOT NULL",
+    [accountId, folder],
+  );
+  return new Set(rows.map((r) => r.imap_uid));
+}
+
 export async function deleteAllMessagesForAccount(
   accountId: string,
 ): Promise<void> {
